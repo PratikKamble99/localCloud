@@ -1,0 +1,13 @@
+{
+  "name": "@repo/peer-engine",
+  "version": "0.0.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.0",
+    "simple-peer": "^9.11.0" 
+  }
+}
