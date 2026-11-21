@@ -2,12 +2,17 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 import tailwindcss from "@tailwindcss/vite";
+import mkcert from 'vite-plugin-mkcert';
+import fs from 'fs';
 
-// https://vite.dev/config/
 export default defineConfig({
   server: {
-    host: true, // This exposes the app to the LAN
-    port: 5173
+    https:{
+      key: fs.readFileSync('../certs/192.168.1.26+2-key.pem'),
+      cert: fs.readFileSync('../certs/192.168.1.26+2.pem'),
+    },
+    host: '0.0.0.0', 
+    port: 5173,
   },
-  plugins: [react(), nodePolyfills(), tailwindcss()],
+  plugins: [react(), nodePolyfills(), tailwindcss(), mkcert()],
 });

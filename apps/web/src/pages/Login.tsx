@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wifi, WifiOff } from 'lucide-react'; // Icons
-import { socket } from '../config/socket-config';
+import { socket } from '../config/socket.config';
 
 export function Login() {
     const [form, setForm] = useState({ username: '', roomId: '', password: '' });

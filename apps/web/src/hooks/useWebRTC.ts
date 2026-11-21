@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import SimplePeer from "simple-peer"; // npm install simple-peer @types/simple-peer
-import { socket } from "../config/socket-config";
+import { socket } from "../config/socket.config";
 
 // Interface for the Peer object we use in the UI
 interface PeerNode {

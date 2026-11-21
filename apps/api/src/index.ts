@@ -4,10 +4,16 @@ import { Server, Socket } from "socket.io";
 import cors from "cors";
 import os from "os";
 
-// ---------- CONFIG ----------
+import fs from 'fs';
+import https from 'https';
+
+const options = {
+  key: fs.readFileSync('../certs/192.168.1.26+2-key.pem'),
+  cert: fs.readFileSync('../certs/192.168.1.26+2.pem'),
+};
+
 const PORT = 8000;
 
-// ---------- TYPES ----------
 interface User {
   socketId: string;
   username: string;
@@ -70,7 +76,7 @@ app.use(
   })
 );
 
-const httpServer = http.createServer(app);
+const httpServer = https.createServer(options, app);
 
 const io = new Server(httpServer, {
   cors: {
@@ -84,7 +90,7 @@ const rooms: Record<string, Room> = {};
 
 // ---------- SOCKET LOGIC ----------
 io.on("connection", (socket) => {
-  console.log(`🔌 New Device Connected: ${socket.id}`);
+  console.log(`🔌 New Device Connected: ${socket.data}`);
 
   socket.on("get-users", (roomId) => {
     const room = rooms[roomId];
@@ -142,14 +148,20 @@ io.on("connection", (socket) => {
   });
 
   socket.on("file-shared", ({ roomId, file }) => {
-    console.log("------------------")
-    console.log(file)
     const room = rooms[roomId];
     if (room) {
-      room.files.push({ ...file, timestamp: Date.now() });
-      io.to(roomId).emit("file-shared", file);
+      const fileWithTimestamp = { ...file, timestamp: Date.now() };
+      room.files.push(fileWithTimestamp);
+      io.to(roomId).emit("file-shared", fileWithTimestamp);
+    }else{
+      console.error("Room not found", roomId);
+      socket.emit("error-msg", "Room not found");
     }
   });
+
+  socket.on("request-file",({roomId,fileId}) => {
+    
+  })
 
   socket.on("leave-room", (roomId) => {
     socket.leave(roomId);

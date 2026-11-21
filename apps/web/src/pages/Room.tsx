@@ -9,37 +9,82 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import SimplePeer from "simple-peer";
-import { socket } from "../config/socket-config";
+import { socket, sendFileToGroup } from "../config/socket.config";
+import { createPeerConnection } from "../config/peer.config";
 
 interface FileMeta {
+  id: string;
   name: string;
   size: string;
-  sender: string;
+  senderSocketId?: string;
+  senderUsername?: string;
   type: "audio" | "image" | "other";
-  timestamp: number;
+  timestamp?: number;
 }
 
 export function Room() {
   const { roomId } = useParams();
-  //   const { peers, sendFile } = useWebRTC(roomId!);
   const { state } = useLocation();
   const [users, setUsers] = useState<any[]>([]);
   const [files, setFiles] = useState<FileMeta[]>([]);
   const peersRef = useRef<Record<string, SimplePeer.Instance>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inComingFile = useRef<any>(null);
+  const filesRef = useRef<FileMeta[]>([]);
+
+  function handleIncomingFile(data: FileMeta, user: any) {
+    const packet = JSON.parse(data.toString());
+    if (packet.type === "FILE_START") {
+      const file = {
+        ...packet,
+        senderSocketId: user.socketId,
+        senderUsername: user.username,
+        timestamp: Date.now(),
+        receivedCount: 0,
+        chunks: [],
+      };
+      inComingFile.current = file;
+    } else if (packet.type === "FILE_CHUNK") {
+      // Handle file chunk
+      if (inComingFile.current) {
+        inComingFile.current.chunks[packet.index] = new Uint8Array(packet.data);
+        inComingFile.current.receivedCount++;
+      }
+    }
+
+    if (
+      inComingFile.current &&
+      inComingFile.current.totalChunks === inComingFile.current.receivedCount
+    ) {
+      const fileBlob = new Blob(inComingFile.current.chunks || [], {
+        type: inComingFile.current.mimeType,
+      });
+
+      console.log(inComingFile.current, filesRef.current);
+      filesRef.current = filesRef.current.map((file) =>
+        file.id === inComingFile.current?.id
+          ? {
+              ...inComingFile.current,
+              blob: fileBlob,
+              senderSocketId: user.socketId,
+              senderUsername: user.username,
+              timestamp: Date.now(),
+            }
+          : file
+      );
+      setFiles(filesRef.current);
+      inComingFile.current = null;
+    }
+  }
 
   useEffect(() => {
-    // Emit get-users after joining
+    // Get users only first time
     socket.emit("get-users", roomId);
 
     socket.on("new-user-joined", (user) => {
-      console.log("New user joined:", user);
       if (peersRef.current[user.socketId]) return;
 
-      const peer = new SimplePeer({
-        initiator: false, // We are the receiver
-        trickle: false,
-      });
+      const peer = createPeerConnection(false);
 
       // Send our signal to the new user
       peer.on("signal", (signal) => {
@@ -55,8 +100,7 @@ export function Room() {
       });
 
       peer.on("data", (data) => {
-        console.log("Received data:", data);
-        // Handle incoming file data
+        handleIncomingFile(data, user);
       });
 
       peersRef.current[user.socketId] = peer;
@@ -64,7 +108,6 @@ export function Room() {
     });
 
     socket.on("users-list", (users) => {
-      console.log("Users list received:", users);
       setUsers(users);
 
       // Create peer connections for existing users
@@ -72,10 +115,7 @@ export function Room() {
         if (user.socketId === socket.id) return;
         if (peersRef.current[user.socketId]) return;
 
-        const peer = new SimplePeer({
-          initiator: true, // We are the initiator for existing users
-          trickle: false,
-        });
+        const peer = createPeerConnection(true);
 
         // Send our signal to the existing user
         peer.on("signal", (signal) => {
@@ -91,7 +131,7 @@ export function Room() {
         });
 
         peer.on("data", (data) => {
-          console.log("Received data:", data);
+          handleIncomingFile(data, user);
         });
 
         peersRef.current[user.socketId] = peer;
@@ -109,7 +149,30 @@ export function Room() {
     });
 
     socket.on("file-shared", (file) => {
-      setFiles((prev) => [{ ...file, sender: "Unknown", timestamp: Date.now() }, ...prev]);
+      console.log("File metadata received:", file);
+      // if (filesRef.current.find((f) => f.id === file.id)) return;
+      // filesRef.current.push({
+      //   ...file,
+      //   sender: "Unknown",
+      //   timestamp: Date.now(),
+      // });
+      const updatedFiles = [...files];
+      const existingFile = updatedFiles.find((f) => f.id === file.id);
+
+      if (existingFile) {
+        updatedFiles.map((f) => {
+          if (f.id === file.id) {
+            return { ...f, ...file };
+          }
+          return f;
+        });
+      } else {
+        updatedFiles.push(file);
+      }
+
+      console.log("Updated files:", updatedFiles);
+
+      setFiles(updatedFiles);
     });
 
     return () => {
@@ -118,7 +181,7 @@ export function Room() {
       socket.off("users-list");
       socket.off("signal");
       socket.off("file-shared");
-      
+
       // Clean up peer connections
       Object.values(peersRef.current).forEach((peer) => {
         peer.destroy();
@@ -135,41 +198,47 @@ export function Room() {
     if (file.type.startsWith("audio")) type = "audio";
     if (file.type.startsWith("image")) type = "image";
 
+    const fileId = Math.random().toString(36).substring(2, 15);
+
+    const uploadedFile = {
+      id: fileId,
+      name: file.name,
+      size: (file.size / 1024 / 1024).toFixed(1) + " MB",
+      type,
+      senderSocketId: socket.id,
+      senderUsername: state.username || "Unknown",
+    };
+
     // 1️⃣ Broadcast metadata via Socket (UI feed)
     socket.emit("file-shared", {
       roomId,
-      file: {
-        name: file.name,
-        size: (file.size / 1024 / 1024).toFixed(1) + " MB",
-        type,
-        sender: state?.username || "Unknown",
-      },
+      file: uploadedFile,
     });
 
-    // 2️⃣ Send actual file P2P via WebRTC
-    Object.values(peersRef.current).forEach((peer) => {
-      if (peer.connected) {
-        // For now, send file metadata. Later implement chunking
-        peer.send(JSON.stringify({
-          type: 'FILE_METADATA',
-          name: file.name,
-          size: file.size,
-          mimeType: file.type,
-        }));
-      }
-    });
+    // UPDATE SHARED FILE LIST
+    // filesRef.current.push(uploadedFile);
+    // console.log(filesRef.current);
+    // setFiles(filesRef.current);
+    setFiles((prev) => [...prev, uploadedFile]);
+
+    // SEND FILE ON PEERS
+    // sendFileToGroup(file, peersRef.current, fileId);
   };
 
-  console.log(users, users.length);
+  console.log(files, peersRef.current, users);
 
   const handleDownload = (file: any) => {
-    console.log("Downloading file:", file);
-    // const peer = peers.find((p) => p.socketId === file.socketId);
-    // if (peer) {
-    //   peer.send(file);
-    // }
-    const link = document.createElement('a');
-    link.href = file.url;
+    socket.emit("request-file", {
+      roomId,
+      fileId: file.id,
+    });
+
+    if (!file.blob) return;
+
+    const url = URL.createObjectURL(file.blob);
+
+    const link = document.createElement("a");
+    link.href = url;
     link.download = file.name;
     link.click();
   };
@@ -240,7 +309,7 @@ export function Room() {
                     {file.size}
                   </span>
                   <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700">
-                    {file.sender}
+                    {file.senderUsername}
                   </span>
                 </div>
               </div>
@@ -248,9 +317,9 @@ export function Room() {
 
             <button
               onClick={() => handleDownload(file)}
-              className="w-10 h-10 rounded-full bg-slate-800 hover:bg-blue-600 hover:text-white text-blue-400 flex items-center justify-center transition-colors"
+              className="w-10 h-10 rounded-full bg-slate-800 hover:bg-blue-600 text-blue-400 transition-colors"
             >
-              <Download className="w-5 h-5" />
+              <Download width={20} height={20} />
             </button>
           </div>
         ))}
